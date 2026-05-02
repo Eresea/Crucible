@@ -1,0 +1,15 @@
+[package]
+name = "crucible-editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crucible-core.workspace = true
+crucible-render.workspace = true
+pollster.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+winit.workspace = true
