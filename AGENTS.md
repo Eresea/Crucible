@@ -21,6 +21,7 @@ Crucible is a Rust-first 3D game engine focused on performance, modularity, and 
 - `apps/crucible-editor`: native editor/runtime shell.
 - `crates/crucible-core`: lifecycle, modules, frame timing, shared engine contracts.
 - `crates/crucible-render`: GPU backend and rendering abstractions.
+- `crates/crucible-ui`: retained editor UI, docking, panel primitives, text rendering, script highlighting.
 - `crates/crucible-scripting`: gameplay scripting contracts and native script host.
 - `docs`: architecture notes and long-form design decisions.
 
@@ -53,7 +54,9 @@ Renderer changes should preserve:
 
 ## Editor
 
-The editor should feel immediate, quiet, and efficient. Build tools for repeated professional use: scene hierarchy, inspector, asset browser, command palette, logs, profiler, and viewport controls should prioritize scanability over decoration.
+The editor should feel immediate, quiet, and efficient. Build tools for repeated professional use: scene hierarchy, inspector, asset browser, script editor, command palette, logs, profiler, and viewport controls should prioritize scanability over decoration.
+
+Editor UI work should start in `crucible-ui` unless it is specifically native-window setup in `crucible-editor`. Keep UI rendering event-driven: invalidate and redraw on input, layout changes, script edits, asset refreshes, or play-mode animation; do not redraw continuously while idle.
 
 Follow `DESIGN.md` for visual direction.
 

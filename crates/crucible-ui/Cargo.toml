@@ -1,0 +1,16 @@
+[package]
+name = "crucible-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+glyphon.workspace = true
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
+wgpu.workspace = true

@@ -84,6 +84,27 @@ pub struct GpuRenderer<'window> {
     config: wgpu::SurfaceConfiguration,
 }
 
+pub struct RenderFrame {
+    surface_texture: wgpu::SurfaceTexture,
+    view: wgpu::TextureView,
+    encoder: wgpu::CommandEncoder,
+}
+
+impl RenderFrame {
+    #[must_use]
+    pub fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
+        &mut self.encoder
+    }
+
+    pub fn encoder_and_view_mut(&mut self) -> (&mut wgpu::CommandEncoder, &wgpu::TextureView) {
+        (&mut self.encoder, &self.view)
+    }
+}
+
 impl<'window> GpuRenderer<'window> {
     pub async fn new(window: &'window Window, options: RenderOptions) -> Result<Self, RenderError> {
         let size = window.inner_size();
@@ -181,7 +202,7 @@ impl<'window> GpuRenderer<'window> {
         self.surface.configure(&self.device, &self.config);
     }
 
-    pub fn render(&mut self, clear_color: ClearColor) -> Result<(), RenderError> {
+    pub fn begin_frame(&mut self, clear_color: ClearColor) -> Result<RenderFrame, RenderError> {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -223,8 +244,21 @@ impl<'window> GpuRenderer<'window> {
             });
         }
 
-        self.queue.submit([encoder.finish()]);
-        frame.present();
+        Ok(RenderFrame {
+            surface_texture: frame,
+            view,
+            encoder,
+        })
+    }
+
+    pub fn submit_frame(&mut self, frame: RenderFrame) {
+        self.queue.submit([frame.encoder.finish()]);
+        frame.surface_texture.present();
+    }
+
+    pub fn render(&mut self, clear_color: ClearColor) -> Result<(), RenderError> {
+        let frame = self.begin_frame(clear_color)?;
+        self.submit_frame(frame);
         Ok(())
     }
 }

@@ -4,6 +4,7 @@ members = [
     "crates/crucible-core",
     "crates/crucible-render",
     "crates/crucible-scripting",
+    "crates/crucible-ui",
 ]
 resolver = "3"
 
@@ -15,14 +16,21 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 anyhow = "1.0"
+bytemuck = { version = "1.25", features = ["derive"] }
 crucible-core = { path = "crates/crucible-core" }
 crucible-render = { path = "crates/crucible-render" }
 crucible-scripting = { path = "crates/crucible-scripting" }
+crucible-ui = { path = "crates/crucible-ui" }
+glyphon = "0.11"
 glam = { version = "0.30", features = ["bytemuck"] }
 pollster = "0.4"
+ron = "0.12"
+serde = { version = "1.0", features = ["derive"] }
 smallvec = "1.15"
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
 wgpu = "29.0"
 winit = "0.30"

@@ -9,6 +9,7 @@ Crucible should feel lightweight to build with, but its runtime should be biased
 - `crucible-core`: owns the engine lifecycle, frame clock, module registration, shutdown requests, and shared frame context.
 - `crucible-render`: owns GPU device/surface setup and frame submission through `wgpu`.
 - `crucible-scripting`: starts with Rust-native scripts so gameplay behavior can be ergonomic without embedding a slower language runtime too early.
+- `crucible-ui`: owns the retained custom editor UI, dock layout, hit testing, draw list, `wgpu` UI renderer, text rendering, asset browser primitives, and script highlighting.
 - `crucible-editor`: hosts the native app shell, window loop, renderer startup, and later designer/editor workflows.
 
 ## Rendering Choice
@@ -25,7 +26,11 @@ The initial renderer already requests a high-performance adapter and configures 
 
 ## Editor Direction
 
-The editor should be a thin orchestration layer over engine services. GPUI can be evaluated for panels, inspectors, asset browser, scene hierarchy, and command palette style workflows. Game viewport rendering should continue to be owned by `crucible-render`.
+The editor is a thin orchestration layer over engine services plus a custom retained UI built in `crucible-ui`. The first editor shell uses dockable/resizable panels for viewport, scene outline, inspector, asset manager, and script editor.
+
+Game viewport rendering should continue to be owned by `crucible-render`. Editor UI rendering is composited after the viewport into the same surface frame, using event-driven invalidation so idle UI does not redraw continuously.
+
+GPUI can still be evaluated later for non-Windows experiments or specialized editor surfaces, but it is not the first implementation path.
 
 ## Scripting Direction
 
