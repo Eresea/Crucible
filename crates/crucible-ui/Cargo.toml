@@ -6,11 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-bytemuck.workspace = true
-glyphon.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
 ron.workspace = true
-serde.workspace = true
 thiserror.workspace = true
-tree-sitter.workspace = true
-tree-sitter-rust.workspace = true
-wgpu.workspace = true

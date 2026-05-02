@@ -4,7 +4,6 @@ use std::{
 };
 
 use thiserror::Error;
-use tree_sitter::{Node, Parser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HighlightKind {
@@ -142,8 +141,6 @@ impl ScriptBuffer {
 pub enum ScriptError {
     #[error("failed to read script: {0}")]
     Read(#[from] std::io::Error),
-    #[error("failed to initialize Rust parser")]
-    Parser,
 }
 
 pub struct ScriptDocument {
@@ -173,6 +170,11 @@ impl ScriptDocument {
         Ok(())
     }
 
+    pub fn set_text(&mut self, text: impl Into<String>) {
+        self.buffer = ScriptBuffer::new(text);
+        self.highlights.clear();
+    }
+
     #[must_use]
     pub fn file_name(&self) -> String {
         self.path
@@ -183,71 +185,159 @@ impl ScriptDocument {
     }
 }
 
-pub struct RustHighlighter {
-    parser: Parser,
-}
+pub struct RustHighlighter;
 
 impl RustHighlighter {
     pub fn new() -> Result<Self, ScriptError> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .map_err(|_| ScriptError::Parser)?;
-        Ok(Self { parser })
+        Ok(Self)
     }
 
     #[must_use]
-    pub fn refresh(&mut self, text: &str) -> Vec<HighlightSpan> {
-        let Some(tree) = self.parser.parse(text, None) else {
-            return Vec::new();
-        };
-
+    pub fn refresh(&mut self, source: &str) -> Vec<HighlightSpan> {
         let mut spans = Vec::new();
-        collect_highlights(tree.root_node(), &mut spans);
+        collect_lexical_highlights(source, &mut spans);
         spans.sort_by_key(|span| (span.start, span.end));
         spans.dedup_by_key(|span| (span.start, span.end, span.kind));
         spans
     }
 }
 
-fn collect_highlights(node: Node<'_>, spans: &mut Vec<HighlightSpan>) {
-    if node.kind() == "function_item" {
-        if let Some(name) = node.child_by_field_name("name") {
+fn collect_lexical_highlights(source: &str, spans: &mut Vec<HighlightSpan>) {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    let mut previous_word: Option<&str> = None;
+
+    while index < bytes.len() {
+        if source[index..].starts_with("//") {
+            let end = source[index..]
+                .find('\n')
+                .map(|offset| index + offset)
+                .unwrap_or(source.len());
             spans.push(HighlightSpan {
-                start: name.start_byte(),
-                end: name.end_byte(),
-                kind: HighlightKind::Function,
+                start: index,
+                end,
+                kind: HighlightKind::Comment,
             });
+            index = end;
+            continue;
         }
-    }
 
-    if let Some(kind) = classify_node(node.kind()) {
-        spans.push(HighlightSpan {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            kind,
-        });
-        return;
-    }
+        if bytes[index] == b'"' {
+            let mut end = index + 1;
+            while end < bytes.len() {
+                if bytes[end] == b'\\' {
+                    end = (end + 2).min(bytes.len());
+                    continue;
+                }
+                if bytes[end] == b'"' {
+                    end += 1;
+                    break;
+                }
+                end += 1;
+            }
+            spans.push(HighlightSpan {
+                start: index,
+                end,
+                kind: HighlightKind::String,
+            });
+            index = end;
+            previous_word = None;
+            continue;
+        }
 
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_highlights(child, spans);
+        if bytes[index].is_ascii_digit() {
+            let start = index;
+            index += 1;
+            while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'.') {
+                index += 1;
+            }
+            spans.push(HighlightSpan {
+                start,
+                end: index,
+                kind: HighlightKind::Number,
+            });
+            previous_word = None;
+            continue;
+        }
+
+        if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            let word = &source[start..index];
+            if previous_word == Some("fn") {
+                spans.push(HighlightSpan {
+                    start,
+                    end: index,
+                    kind: HighlightKind::Function,
+                });
+            } else if is_keyword(word) {
+                spans.push(HighlightSpan {
+                    start,
+                    end: index,
+                    kind: HighlightKind::Keyword,
+                });
+            } else if is_type_word(word) {
+                spans.push(HighlightSpan {
+                    start,
+                    end: index,
+                    kind: HighlightKind::Type,
+                });
+            }
+            previous_word = Some(word);
+            continue;
+        }
+
+        if !bytes[index].is_ascii_whitespace() {
+            previous_word = None;
+        }
+        index += 1;
     }
 }
 
-fn classify_node(kind: &str) -> Option<HighlightKind> {
-    match kind {
-        "line_comment" | "block_comment" => Some(HighlightKind::Comment),
-        "string_literal" | "raw_string_literal" | "char_literal" => Some(HighlightKind::String),
-        "integer_literal" | "float_literal" => Some(HighlightKind::Number),
-        "primitive_type" | "type_identifier" => Some(HighlightKind::Type),
-        "let" | "fn" | "struct" | "impl" | "pub" | "use" | "mod" | "enum" | "trait" | "match"
-        | "if" | "else" | "for" | "while" | "loop" | "return" | "Self" => {
-            Some(HighlightKind::Keyword)
-        }
-        _ => None,
-    }
+fn is_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "let"
+            | "fn"
+            | "struct"
+            | "impl"
+            | "pub"
+            | "use"
+            | "mod"
+            | "enum"
+            | "trait"
+            | "match"
+            | "if"
+            | "else"
+            | "for"
+            | "while"
+            | "loop"
+            | "return"
+            | "Self"
+    )
+}
+
+fn is_type_word(word: &str) -> bool {
+    matches!(
+        word,
+        "bool"
+            | "char"
+            | "f32"
+            | "f64"
+            | "i32"
+            | "i64"
+            | "isize"
+            | "str"
+            | "String"
+            | "u32"
+            | "u64"
+            | "usize"
+    )
 }
 
 fn previous_boundary(text: &str, index: usize) -> usize {

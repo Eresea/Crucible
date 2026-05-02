@@ -21,7 +21,7 @@ Crucible is a Rust-first 3D game engine focused on performance, modularity, and 
 - `apps/crucible-editor`: native editor/runtime shell.
 - `crates/crucible-core`: lifecycle, modules, frame timing, shared engine contracts.
 - `crates/crucible-render`: GPU backend and rendering abstractions.
-- `crates/crucible-ui`: retained editor UI, docking, panel primitives, text rendering, script highlighting.
+- `crates/crucible-ui`: GPUI Component editor shell, docked panels, editor state, asset browser state, script workspace wiring.
 - `crates/crucible-scripting`: gameplay scripting contracts and native script host.
 - `docs`: architecture notes and long-form design decisions.
 
@@ -43,7 +43,7 @@ cargo run -p crucible-editor
 
 ## Rendering
 
-`wgpu` is the primary GPU backend. Keep game rendering owned by `crucible-render`, even if the editor later adopts GPUI or another Rust UI framework for panels and controls.
+`wgpu` is the primary game GPU backend. Keep game rendering owned by `crucible-render`; GPUI Component is for editor chrome, panels, inputs, and designer tooling.
 
 Renderer changes should preserve:
 
@@ -56,7 +56,7 @@ Renderer changes should preserve:
 
 The editor should feel immediate, quiet, and efficient. Build tools for repeated professional use: scene hierarchy, inspector, asset browser, script editor, command palette, logs, profiler, and viewport controls should prioritize scanability over decoration.
 
-Editor UI work should start in `crucible-ui` unless it is specifically native-window setup in `crucible-editor`. Keep UI rendering event-driven: invalidate and redraw on input, layout changes, script edits, asset refreshes, or play-mode animation; do not redraw continuously while idle.
+Editor UI work should start in `crucible-ui` unless it is specifically native-window setup in `crucible-editor`. Prefer `gpui-component` primitives for dock panels, controls, inputs, and code-editing surfaces before building custom widgets.
 
 Follow `DESIGN.md` for visual direction.
 

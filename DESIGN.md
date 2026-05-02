@@ -14,7 +14,7 @@ Crucible's UI should be minimalist, modern, and performance-focused. The editor 
 
 - First screen should be the usable editor, not a landing page.
 - The viewport is the primary surface and should get the most space.
-- Panels should be dockable in spirit: hierarchy, inspector, assets, console, profiler.
+- Panels should use the GPUI Component dock system: hierarchy, inspector, assets, console, profiler, and viewport surfaces should remain modular, dockable, and resizable.
 - Avoid nested cards. Use panels, splitters, tabs, rows, and toolbars.
 - Keep controls compact and aligned to a clear grid.
 - Favor predictable desktop-editor patterns over custom novelty.
