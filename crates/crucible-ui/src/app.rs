@@ -11,7 +11,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb, rgba,
 };
 use gpui_component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, IconName, Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     description_list::DescriptionList,
@@ -518,61 +518,69 @@ impl Render for EditorRoot {
         let status = self.model.read(cx).status().to_string();
 
         div()
-            .relative()
+            .flex()
+            .flex_col()
             .size_full()
             .overflow_hidden()
             .bg(background())
             .text_color(text())
             .child(
-                div()
-                    .h(px(36.0))
-                    .w_full()
-                    .px_3()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .border_b_1()
-                    .border_color(border())
-                    .bg(panel_header())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .mr_3()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .text_size(px(13.0))
-                                    .child("Crucible"),
-                            )
-                            .child(self.menu_button(MenuId::File, "File", cx))
-                            .child(self.menu_button(MenuId::Edit, "Edit", cx))
-                            .child(self.menu_button(MenuId::View, "View", cx))
-                            .child(self.menu_button(MenuId::Assets, "Assets", cx))
-                            .child(self.menu_button(MenuId::Build, "Build", cx))
-                            .child(self.menu_button(MenuId::Run, "Run", cx))
-                            .child(self.menu_button(MenuId::Help, "Help", cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(div().mr_2().text_xs().text_color(muted()).child(status))
-                            .child(self.command_button(CommandId::SaveScript, "Save", false, cx))
-                            .child(self.command_button(CommandId::Play, "Play", play_mode, cx))
-                            .child(self.command_button(CommandId::Pause, "Pause", false, cx))
-                            .child(self.command_button(CommandId::Stop, "Stop", false, cx)),
-                    ),
+                TitleBar::new().bg(panel_header()).child(
+                    div()
+                        .h_full()
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_3()
+                        .pr_2()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .mr_3()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_size(px(13.0))
+                                        .child("Crucible"),
+                                )
+                                .child(self.menu_button(MenuId::File, "File", cx))
+                                .child(self.menu_button(MenuId::Edit, "Edit", cx))
+                                .child(self.menu_button(MenuId::View, "View", cx))
+                                .child(self.menu_button(MenuId::Assets, "Assets", cx))
+                                .child(self.menu_button(MenuId::Build, "Build", cx))
+                                .child(self.menu_button(MenuId::Run, "Run", cx))
+                                .child(self.menu_button(MenuId::Help, "Help", cx)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_1()
+                                .flex_shrink_0()
+                                .child(div().mr_2().text_xs().text_color(muted()).child(status))
+                                .child(self.command_button(
+                                    CommandId::SaveScript,
+                                    "Save",
+                                    false,
+                                    cx,
+                                ))
+                                .child(self.command_button(CommandId::Play, "Play", play_mode, cx))
+                                .child(self.command_button(CommandId::Pause, "Pause", false, cx))
+                                .child(self.command_button(CommandId::Stop, "Stop", false, cx)),
+                        ),
+                ),
             )
             .child(
                 div()
-                    .absolute()
-                    .top(px(36.0))
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
+                    .flex_1()
+                    .min_h_0()
+                    .border_t_1()
+                    .border_color(border())
                     .child(self.dock_area.clone()),
             )
     }

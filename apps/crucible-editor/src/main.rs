@@ -1,9 +1,9 @@
 use anyhow::Result;
 use gpui::{
-    App, AppContext as _, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px,
+    App, AppContext as _, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px,
     size,
 };
-use gpui_component::Root;
+use gpui_component::{Root, TitleBar};
 use tracing_subscriber::EnvFilter;
 
 use crucible_ui::EditorRoot;
@@ -26,10 +26,8 @@ fn main() -> Result<()> {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Crucible Editor".into()),
-                    ..Default::default()
-                }),
+                titlebar: Some(TitleBar::title_bar_options()),
+                window_decorations: Some(WindowDecorations::Client),
                 window_min_size: Some(size(px(960.0), px(540.0))),
                 ..Default::default()
             },
