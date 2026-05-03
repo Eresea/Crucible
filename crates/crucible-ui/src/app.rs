@@ -6,20 +6,19 @@ use std::{
 
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Rgba, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    prelude::FluentBuilder as _, px, rgb, rgba,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, Rgba,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    WindowControlArea, div, prelude::FluentBuilder as _, px, rgb, rgba,
 };
 use gpui_component::{
-    ActiveTheme as _, IconName, Sizable as _, TitleBar,
+    ActiveTheme as _, InteractiveElementExt as _, Sizable as _,
     button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
     description_list::DescriptionList,
     dock::{
         DockArea, DockAreaState, DockEvent, DockItem, Panel, PanelControl, PanelEvent, PanelView,
         register_panel,
     },
-    input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
+    input::{Input, InputEvent, InputState},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement as _,
@@ -32,6 +31,7 @@ use crate::{
 
 const LAYOUT_VERSION: usize = 2;
 const LAYOUT_FILE: &str = ".crucible/editor-layout.ron";
+const MATERIAL_SYMBOLS_FONT: &str = "Material Symbols Outlined";
 
 #[derive(Debug, Error)]
 pub enum UiError {
@@ -258,6 +258,81 @@ impl EditorRoot {
                 run_editor_command(&model, &dock_area, command, window, cx);
             })
     }
+
+    fn render_title_bar(
+        &self,
+        status: String,
+        play_mode: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("title-bar")
+            .h(px(34.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(border())
+            .bg(panel_header())
+            .window_control_area(WindowControlArea::Drag)
+            .on_double_click(|_, window, _| window.zoom_window())
+            .child(
+                div()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .pl_3()
+                    .child(
+                        div()
+                            .mr_3()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_size(px(13.0))
+                            .child("Crucible"),
+                    )
+                    .child(self.menu_button(MenuId::File, "File", cx))
+                    .child(self.menu_button(MenuId::Edit, "Edit", cx))
+                    .child(self.menu_button(MenuId::View, "View", cx))
+                    .child(self.menu_button(MenuId::Assets, "Assets", cx))
+                    .child(self.menu_button(MenuId::Build, "Build", cx))
+                    .child(self.menu_button(MenuId::Run, "Run", cx))
+                    .child(self.menu_button(MenuId::Help, "Help", cx)),
+            )
+            .child(
+                div()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .child(div().mr_2().text_xs().text_color(muted()).child(status))
+                    .child(self.command_button(CommandId::SaveScript, "Save", false, cx))
+                    .child(self.command_button(CommandId::Play, "Play", play_mode, cx))
+                    .child(self.command_button(CommandId::Pause, "Pause", false, cx))
+                    .child(self.command_button(CommandId::Stop, "Stop", false, cx))
+                    .child(material_window_button(
+                        "minimize",
+                        "remove",
+                        WindowControlArea::Min,
+                        |window| window.minimize_window(),
+                    ))
+                    .child(material_window_button(
+                        "maximize",
+                        "crop_square",
+                        WindowControlArea::Max,
+                        |window| window.zoom_window(),
+                    ))
+                    .child(material_window_button(
+                        "close",
+                        "close",
+                        WindowControlArea::Close,
+                        |window| window.remove_window(),
+                    )),
+            )
+    }
 }
 
 fn menu_items(menu: MenuId) -> Vec<(&'static str, Option<CommandId>)> {
@@ -352,39 +427,70 @@ fn update_translation_from_input(
     }
 }
 
-fn step_translation_axis(
-    model: &Entity<EditorModel>,
-    axis: usize,
-    event: &NumberInputEvent,
-    cx: &mut Context<InspectorPanel>,
-) -> Option<f32> {
-    let delta = match event {
-        NumberInputEvent::Step(StepAction::Increment) => 0.1,
-        NumberInputEvent::Step(StepAction::Decrement) => -0.1,
-    };
-
-    let mut next = None;
-    model.update(cx, |model, cx| {
-        let current = model
-            .scene
-            .selected_transform()
-            .map(|transform| transform.translation[axis])
-            .unwrap_or_default();
-        let value = current + delta;
-        model.scene.set_selected_translation_axis(axis, value);
-        model.status = "Inspector modified".to_string();
-        next = Some(value);
-        cx.notify();
-    });
-    next
-}
-
 fn format_float(value: f32) -> String {
     if value.abs() < 0.0001 {
         "0".to_string()
     } else {
         format!("{value:.2}")
     }
+}
+
+fn material_icon(name: &'static str, size: f32) -> impl IntoElement {
+    div()
+        .size(px(size))
+        .flex()
+        .items_center()
+        .justify_center()
+        .font_family(MATERIAL_SYMBOLS_FONT)
+        .text_size(px(size))
+        .line_height(px(size))
+        .child(name)
+}
+
+fn material_window_button(
+    id: &'static str,
+    icon: &'static str,
+    control_area: WindowControlArea,
+    action: impl Fn(&mut Window) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .h_full()
+        .w(px(34.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(text())
+        .window_control_area(control_area)
+        .hover(|style| style.bg(rgb(0x202936)))
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            action(window);
+        })
+        .child(material_icon(icon, 18.0))
+}
+
+fn material_menu_item(
+    label: &'static str,
+    icon: &'static str,
+    disabled: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> PopupMenuItem {
+    PopupMenuItem::element(move |_, _| {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w_full()
+            .child(material_icon(icon, 16.0))
+            .child(label)
+    })
+    .disabled(disabled)
+    .on_click(on_click)
 }
 
 fn scene_context_menu(
@@ -414,102 +520,97 @@ fn scene_context_menu(
 
     menu.min_w(px(220.0))
         .label(name)
-        .item(
-            PopupMenuItem::new("Add Child")
-                .icon(IconName::Plus)
-                .on_click({
-                    let model = model.clone();
-                    move |_, _, cx| {
-                        model.update(cx, |model, cx| {
-                            model.scene.add_child_to_selected();
-                            model.status = "Scene node added".to_string();
-                            cx.notify();
-                        });
-                    }
-                }),
-        )
-        .item(
-            PopupMenuItem::new("Duplicate")
-                .icon(IconName::Copy)
-                .on_click({
-                    let model = model.clone();
-                    move |_, _, cx| {
-                        model.update(cx, |model, cx| {
-                            model.scene.duplicate_selected();
-                            model.status = "Scene node duplicated".to_string();
-                            cx.notify();
-                        });
-                    }
-                }),
-        )
+        .item(material_menu_item("Add Child", "add", false, {
+            let model = model.clone();
+            move |_, _, cx| {
+                model.update(cx, |model, cx| {
+                    model.scene.add_child_to_selected();
+                    model.status = "Scene node added".to_string();
+                    cx.notify();
+                });
+            }
+        }))
+        .item(material_menu_item("Duplicate", "content_copy", false, {
+            let model = model.clone();
+            move |_, _, cx| {
+                model.update(cx, |model, cx| {
+                    model.scene.duplicate_selected();
+                    model.status = "Scene node duplicated".to_string();
+                    cx.notify();
+                });
+            }
+        }))
         .separator()
-        .item(
-            PopupMenuItem::new(if visible { "Hide" } else { "Show" })
-                .icon(if visible {
-                    IconName::EyeOff
-                } else {
-                    IconName::Eye
-                })
-                .on_click({
-                    let model = model.clone();
-                    move |_, _, cx| {
-                        model.update(cx, |model, cx| {
-                            let visible = model.scene.selected_visible().unwrap_or(true);
-                            model.scene.set_selected_visible(!visible);
-                            model.status = "Scene visibility changed".to_string();
-                            cx.notify();
-                        });
-                    }
-                }),
-        )
-        .item(
-            PopupMenuItem::new(if expanded { "Collapse" } else { "Expand" })
-                .icon(if expanded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                })
-                .disabled(!has_children)
-                .on_click({
-                    let model = model.clone();
-                    move |_, _, cx| {
-                        model.update(cx, |model, cx| {
-                            model.scene.toggle_selected_expanded();
-                            model.status = "Scene outline updated".to_string();
-                            cx.notify();
-                        });
-                    }
-                }),
-        )
-        .item(
-            PopupMenuItem::new("Reset Transform")
-                .icon(IconName::Replace)
-                .on_click({
-                    let model = model.clone();
-                    move |_, _, cx| {
-                        model.update(cx, |model, cx| {
-                            model.scene.reset_selected_transform();
-                            model.status = "Transform reset".to_string();
-                            cx.notify();
-                        });
-                    }
-                }),
-        )
-        .separator()
-        .item(
-            PopupMenuItem::new("Delete")
-                .icon(IconName::Delete)
-                .on_click(move |_, _, cx| {
+        .item(material_menu_item(
+            if visible { "Hide" } else { "Show" },
+            if visible {
+                "visibility_off"
+            } else {
+                "visibility"
+            },
+            false,
+            {
+                let model = model.clone();
+                move |_, _, cx| {
                     model.update(cx, |model, cx| {
-                        if model.scene.delete_selected() {
-                            model.status = "Scene node deleted".to_string();
-                        } else {
-                            model.status = "Delete failed".to_string();
-                        }
+                        let visible = model.scene.selected_visible().unwrap_or(true);
+                        model.scene.set_selected_visible(!visible);
+                        model.status = "Scene visibility changed".to_string();
                         cx.notify();
                     });
-                }),
-        )
+                }
+            },
+        ))
+        .item(material_menu_item(
+            if expanded { "Collapse" } else { "Expand" },
+            if expanded {
+                "expand_more"
+            } else {
+                "chevron_right"
+            },
+            !has_children,
+            {
+                let model = model.clone();
+                move |_, _, cx| {
+                    model.update(cx, |model, cx| {
+                        model.scene.toggle_selected_expanded();
+                        model.status = "Scene outline updated".to_string();
+                        cx.notify();
+                    });
+                }
+            },
+        ))
+        .item(material_menu_item(
+            "Reset Transform",
+            "restart_alt",
+            false,
+            {
+                let model = model.clone();
+                move |_, _, cx| {
+                    model.update(cx, |model, cx| {
+                        model.scene.reset_selected_transform();
+                        model.status = "Transform reset".to_string();
+                        cx.notify();
+                    });
+                }
+            },
+        ))
+        .separator()
+        .item(material_menu_item(
+            "Delete",
+            "delete",
+            false,
+            move |_, _, cx| {
+                model.update(cx, |model, cx| {
+                    if model.scene.delete_selected() {
+                        model.status = "Scene node deleted".to_string();
+                    } else {
+                        model.status = "Delete failed".to_string();
+                    }
+                    cx.notify();
+                });
+            },
+        ))
 }
 
 impl Render for EditorRoot {
@@ -524,57 +625,7 @@ impl Render for EditorRoot {
             .overflow_hidden()
             .bg(background())
             .text_color(text())
-            .child(
-                TitleBar::new().bg(panel_header()).child(
-                    div()
-                        .h_full()
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_3()
-                        .pr_2()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .min_w_0()
-                                .child(
-                                    div()
-                                        .mr_3()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_size(px(13.0))
-                                        .child("Crucible"),
-                                )
-                                .child(self.menu_button(MenuId::File, "File", cx))
-                                .child(self.menu_button(MenuId::Edit, "Edit", cx))
-                                .child(self.menu_button(MenuId::View, "View", cx))
-                                .child(self.menu_button(MenuId::Assets, "Assets", cx))
-                                .child(self.menu_button(MenuId::Build, "Build", cx))
-                                .child(self.menu_button(MenuId::Run, "Run", cx))
-                                .child(self.menu_button(MenuId::Help, "Help", cx)),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_end()
-                                .gap_1()
-                                .flex_shrink_0()
-                                .child(div().mr_2().text_xs().text_color(muted()).child(status))
-                                .child(self.command_button(
-                                    CommandId::SaveScript,
-                                    "Save",
-                                    false,
-                                    cx,
-                                ))
-                                .child(self.command_button(CommandId::Play, "Play", play_mode, cx))
-                                .child(self.command_button(CommandId::Pause, "Pause", false, cx))
-                                .child(self.command_button(CommandId::Stop, "Stop", false, cx)),
-                        ),
-                ),
-            )
+            .child(self.render_title_bar(status, play_mode, cx))
             .child(
                 div()
                     .flex_1()
@@ -836,14 +887,6 @@ impl InspectorPanel {
                     }
                 }
             }));
-            subscriptions.push(cx.subscribe_in(&input, window, {
-                let input = input.clone();
-                move |this, _, event: &NumberInputEvent, window, cx| {
-                    if let Some(value) = step_translation_axis(&this.model, axis, event, cx) {
-                        set_input_text(&input, format_float(value), window, cx);
-                    }
-                }
-            }));
         }
 
         this._subscriptions = subscriptions;
@@ -908,30 +951,40 @@ impl Render for InspectorPanel {
                                     .items_center()
                                     .gap_1()
                                     .child(
-                                        NumberInput::new(&self.translation_inputs[0])
-                                            .small()
-                                            .appearance(true),
+                                        div()
+                                            .w(px(72.0))
+                                            .child(Input::new(&self.translation_inputs[0]).small()),
                                     )
                                     .child(
-                                        NumberInput::new(&self.translation_inputs[1])
-                                            .small()
-                                            .appearance(true),
+                                        div()
+                                            .w(px(72.0))
+                                            .child(Input::new(&self.translation_inputs[1]).small()),
                                     )
                                     .child(
-                                        NumberInput::new(&self.translation_inputs[2])
-                                            .small()
-                                            .appearance(true),
+                                        div()
+                                            .w(px(72.0))
+                                            .child(Input::new(&self.translation_inputs[2]).small()),
                                     )
                                     .into_any_element(),
                                 1,
                             )
                             .item(
                                 "Visible",
-                                Checkbox::new("inspector-visible")
-                                    .checked(visible)
-                                    .on_click(move |checked, _, cx| {
+                                Button::new("inspector-visible")
+                                    .small()
+                                    .ghost()
+                                    .child(material_icon(
+                                        if visible {
+                                            "visibility"
+                                        } else {
+                                            "visibility_off"
+                                        },
+                                        16.0,
+                                    ))
+                                    .child(if visible { "Visible" } else { "Hidden" })
+                                    .on_click(move |_, _, cx| {
                                         model_for_visible.update(cx, |model, cx| {
-                                            model.scene.set_selected_visible(*checked);
+                                            model.scene.set_selected_visible(!visible);
                                             model.status = "Inspector modified".to_string();
                                             cx.notify();
                                         });

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anyhow::Result;
 use gpui::{
     App, AppContext as _, Application, Bounds, WindowBounds, WindowDecorations, WindowOptions, px,
@@ -20,6 +22,12 @@ fn main() -> Result<()> {
     let app = Application::new();
 
     app.run(move |cx: &mut App| {
+        cx.text_system()
+            .add_fonts(vec![Cow::Borrowed(include_bytes!(
+                "../../../assets/fonts/MaterialSymbolsOutlined-Regular.ttf"
+            ))])
+            .expect("failed to load Material Symbols font");
+
         crucible_ui::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1280.0), px(720.0)), cx);
