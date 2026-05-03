@@ -11,18 +11,24 @@ use gpui::{
     prelude::FluentBuilder as _, px, rgb, rgba,
 };
 use gpui_component::{
-    ActiveTheme as _, Selectable as _, Sizable as _,
+    ActiveTheme as _, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
+    description_list::DescriptionList,
     dock::{
         DockArea, DockAreaState, DockEvent, DockItem, Panel, PanelControl, PanelEvent, PanelView,
         register_panel,
     },
-    input::{Input, InputEvent, InputState},
+    input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction},
+    list::ListItem,
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement as _,
 };
 use thiserror::Error;
 
-use crate::{AssetIndex, AssetItem, AssetKind, SceneModel, ScriptDocument, script::script_files};
+use crate::{
+    AssetIndex, AssetItem, AssetKind, SceneModel, SceneNodeId, ScriptDocument, script::script_files,
+};
 
 const LAYOUT_VERSION: usize = 2;
 const LAYOUT_FILE: &str = ".crucible/editor-layout.ron";
@@ -150,7 +156,6 @@ pub fn init(cx: &mut App) {
 pub struct EditorRoot {
     model: Entity<EditorModel>,
     dock_area: Entity<DockArea>,
-    open_menu: Option<MenuId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -176,10 +181,7 @@ impl EditorRoot {
         }
 
         let mut subscriptions = Vec::new();
-        subscriptions.push(cx.observe(&model, |this, _, cx| {
-            this.open_menu = None;
-            cx.notify();
-        }));
+        subscriptions.push(cx.observe(&model, |_, _, cx| cx.notify()));
         subscriptions.push(cx.subscribe_in(
             &dock_area,
             window,
@@ -194,56 +196,41 @@ impl EditorRoot {
         Self {
             model,
             dock_area,
-            open_menu: None,
             _subscriptions: subscriptions,
         }
-    }
-
-    fn execute(&mut self, command: CommandId, window: &mut Window, cx: &mut Context<Self>) {
-        match command {
-            CommandId::SaveLayout => {
-                let state = self.dock_area.read(cx).dump(cx);
-                let result = persist_dock_layout(self.model.read(cx).layout_path(), &state);
-                self.model.update(cx, |model, cx| {
-                    model.status = match result {
-                        Ok(()) => "Layout saved".to_string(),
-                        Err(error) => format!("Layout save failed: {error}"),
-                    };
-                    cx.notify();
-                });
-            }
-            _ => {
-                self.model.update(cx, |model, cx| {
-                    model.execute(command);
-                    cx.notify();
-                });
-            }
-        }
-        self.open_menu = None;
-        window.refresh();
-        cx.notify();
     }
 
     fn menu_button(
         &self,
         menu: MenuId,
         label: &'static str,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let selected = self.open_menu == Some(menu);
+        let model = self.model.clone();
+        let dock_area = self.dock_area.clone();
+
         Button::new(("menu", menu as usize))
             .label(label)
             .xsmall()
             .ghost()
-            .selected(selected)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_menu = if this.open_menu == Some(menu) {
-                    None
-                } else {
-                    Some(menu)
-                };
-                cx.notify();
-            }))
+            .dropdown_menu(move |popup, _window, _cx| {
+                menu_items(menu).into_iter().fold(
+                    popup.min_w(px(190.0)),
+                    |popup, (label, command)| {
+                        let model = model.clone();
+                        let dock_area = dock_area.clone();
+                        popup.item(
+                            PopupMenuItem::new(label)
+                                .disabled(command.is_none())
+                                .on_click(move |_, window, cx| {
+                                    if let Some(command) = command {
+                                        run_editor_command(&model, &dock_area, command, window, cx);
+                                    }
+                                }),
+                        )
+                    },
+                )
+            })
     }
 
     fn command_button(
@@ -251,8 +238,11 @@ impl EditorRoot {
         command: CommandId,
         label: &'static str,
         active: bool,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let model = self.model.clone();
+        let dock_area = self.dock_area.clone();
+
         Button::new(("cmd", command as usize))
             .label(label)
             .xsmall()
@@ -264,82 +254,266 @@ impl EditorRoot {
                     button.ghost()
                 }
             })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.execute(command, window, cx);
-            }))
-    }
-
-    fn render_dropdown(
-        &self,
-        menu: MenuId,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let items: Vec<(&'static str, Option<CommandId>)> = match menu {
-            MenuId::File => vec![
-                ("Save Script", Some(CommandId::SaveScript)),
-                ("Save Layout", Some(CommandId::SaveLayout)),
-            ],
-            MenuId::Assets => vec![("Refresh Assets", Some(CommandId::RefreshAssets))],
-            MenuId::Run => vec![
-                ("Play", Some(CommandId::Play)),
-                ("Pause", Some(CommandId::Pause)),
-                ("Stop", Some(CommandId::Stop)),
-            ],
-            MenuId::Edit => vec![("Undo", None), ("Redo", None)],
-            MenuId::View => vec![("Reset Dock Layout", Some(CommandId::SaveLayout))],
-            MenuId::Build => vec![("Build Game", None)],
-            MenuId::Help => vec![("Crucible Docs", None)],
-        };
-
-        let left = match menu {
-            MenuId::File => 88.0,
-            MenuId::Edit => 138.0,
-            MenuId::View => 188.0,
-            MenuId::Assets => 244.0,
-            MenuId::Build => 318.0,
-            MenuId::Run => 378.0,
-            MenuId::Help => 428.0,
-        };
-
-        div()
-            .absolute()
-            .top(px(36.0))
-            .left(px(left))
-            .w(px(190.0))
-            .p_1()
-            .rounded_md()
-            .border_1()
-            .border_color(border())
-            .bg(panel_alt())
-            .shadow_lg()
-            .children(items.into_iter().enumerate().map(|(ix, (label, command))| {
-                let disabled = command.is_none();
-                div()
-                    .id(("menu-item", ix))
-                    .h(px(28.0))
-                    .px_2()
-                    .rounded_sm()
-                    .flex()
-                    .items_center()
-                    .text_size(px(12.0))
-                    .text_color(if disabled { muted() } else { text() })
-                    .when(!disabled, |row| {
-                        row.cursor_pointer()
-                            .hover(|row| row.bg(rgb(0x243042)))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Some(command) = command {
-                                    this.execute(command, window, cx);
-                                }
-                            }))
-                    })
-                    .child(label)
-            }))
+            .on_click(move |_, window, cx| {
+                run_editor_command(&model, &dock_area, command, window, cx);
+            })
     }
 }
 
+fn menu_items(menu: MenuId) -> Vec<(&'static str, Option<CommandId>)> {
+    match menu {
+        MenuId::File => vec![
+            ("Save Script", Some(CommandId::SaveScript)),
+            ("Save Layout", Some(CommandId::SaveLayout)),
+        ],
+        MenuId::Assets => vec![("Refresh Assets", Some(CommandId::RefreshAssets))],
+        MenuId::Run => vec![
+            ("Play", Some(CommandId::Play)),
+            ("Pause", Some(CommandId::Pause)),
+            ("Stop", Some(CommandId::Stop)),
+        ],
+        MenuId::Edit => vec![("Undo", None), ("Redo", None)],
+        MenuId::View => vec![("Save Dock Layout", Some(CommandId::SaveLayout))],
+        MenuId::Build => vec![("Build Game", None)],
+        MenuId::Help => vec![("Crucible Docs", None)],
+    }
+}
+
+fn run_editor_command(
+    model: &Entity<EditorModel>,
+    dock_area: &Entity<DockArea>,
+    command: CommandId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    match command {
+        CommandId::SaveLayout => {
+            let state = dock_area.read(cx).dump(cx);
+            let result = persist_dock_layout(model.read(cx).layout_path(), &state);
+            model.update(cx, |model, cx| {
+                model.status = match result {
+                    Ok(()) => "Layout saved".to_string(),
+                    Err(error) => format!("Layout save failed: {error}"),
+                };
+                cx.notify();
+            });
+        }
+        _ => {
+            model.update(cx, |model, cx| {
+                model.execute(command);
+                cx.notify();
+            });
+        }
+    }
+    window.refresh();
+}
+
+fn set_input_text(
+    input: &Entity<InputState>,
+    value: String,
+    window: &mut Window,
+    cx: &mut Context<InspectorPanel>,
+) {
+    if input.read(cx).text().to_string() == value {
+        return;
+    }
+
+    input.update(cx, |input, cx| {
+        input.set_value(value, window, cx);
+    });
+}
+
+fn update_translation_from_input(
+    model: &Entity<EditorModel>,
+    input: &Entity<InputState>,
+    axis: usize,
+    cx: &mut Context<InspectorPanel>,
+) {
+    let raw = input.read(cx).text().to_string();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    match trimmed.parse::<f32>() {
+        Ok(value) => {
+            model.update(cx, |model, cx| {
+                model.scene.set_selected_translation_axis(axis, value);
+                model.status = "Inspector modified".to_string();
+                cx.notify();
+            });
+        }
+        Err(_) => {
+            model.update(cx, |model, cx| {
+                model.status = format!("Invalid transform value: {trimmed}");
+                cx.notify();
+            });
+        }
+    }
+}
+
+fn step_translation_axis(
+    model: &Entity<EditorModel>,
+    axis: usize,
+    event: &NumberInputEvent,
+    cx: &mut Context<InspectorPanel>,
+) -> Option<f32> {
+    let delta = match event {
+        NumberInputEvent::Step(StepAction::Increment) => 0.1,
+        NumberInputEvent::Step(StepAction::Decrement) => -0.1,
+    };
+
+    let mut next = None;
+    model.update(cx, |model, cx| {
+        let current = model
+            .scene
+            .selected_transform()
+            .map(|transform| transform.translation[axis])
+            .unwrap_or_default();
+        let value = current + delta;
+        model.scene.set_selected_translation_axis(axis, value);
+        model.status = "Inspector modified".to_string();
+        next = Some(value);
+        cx.notify();
+    });
+    next
+}
+
+fn format_float(value: f32) -> String {
+    if value.abs() < 0.0001 {
+        "0".to_string()
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+fn scene_context_menu(
+    menu: PopupMenu,
+    model: Entity<EditorModel>,
+    row_id: SceneNodeId,
+    _window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    model.update(cx, |model, cx| {
+        model.scene.select(row_id);
+        cx.notify();
+    });
+
+    let (name, visible, expanded, has_children) = {
+        let model = model.read(cx);
+        let Some(node) = model.scene.find(row_id) else {
+            return menu;
+        };
+        (
+            node.name.clone(),
+            node.visible,
+            node.expanded,
+            !node.children.is_empty(),
+        )
+    };
+
+    menu.min_w(px(220.0))
+        .label(name)
+        .item(
+            PopupMenuItem::new("Add Child")
+                .icon(IconName::Plus)
+                .on_click({
+                    let model = model.clone();
+                    move |_, _, cx| {
+                        model.update(cx, |model, cx| {
+                            model.scene.add_child_to_selected();
+                            model.status = "Scene node added".to_string();
+                            cx.notify();
+                        });
+                    }
+                }),
+        )
+        .item(
+            PopupMenuItem::new("Duplicate")
+                .icon(IconName::Copy)
+                .on_click({
+                    let model = model.clone();
+                    move |_, _, cx| {
+                        model.update(cx, |model, cx| {
+                            model.scene.duplicate_selected();
+                            model.status = "Scene node duplicated".to_string();
+                            cx.notify();
+                        });
+                    }
+                }),
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new(if visible { "Hide" } else { "Show" })
+                .icon(if visible {
+                    IconName::EyeOff
+                } else {
+                    IconName::Eye
+                })
+                .on_click({
+                    let model = model.clone();
+                    move |_, _, cx| {
+                        model.update(cx, |model, cx| {
+                            let visible = model.scene.selected_visible().unwrap_or(true);
+                            model.scene.set_selected_visible(!visible);
+                            model.status = "Scene visibility changed".to_string();
+                            cx.notify();
+                        });
+                    }
+                }),
+        )
+        .item(
+            PopupMenuItem::new(if expanded { "Collapse" } else { "Expand" })
+                .icon(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .disabled(!has_children)
+                .on_click({
+                    let model = model.clone();
+                    move |_, _, cx| {
+                        model.update(cx, |model, cx| {
+                            model.scene.toggle_selected_expanded();
+                            model.status = "Scene outline updated".to_string();
+                            cx.notify();
+                        });
+                    }
+                }),
+        )
+        .item(
+            PopupMenuItem::new("Reset Transform")
+                .icon(IconName::Replace)
+                .on_click({
+                    let model = model.clone();
+                    move |_, _, cx| {
+                        model.update(cx, |model, cx| {
+                            model.scene.reset_selected_transform();
+                            model.status = "Transform reset".to_string();
+                            cx.notify();
+                        });
+                    }
+                }),
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new("Delete")
+                .icon(IconName::Delete)
+                .on_click(move |_, _, cx| {
+                    model.update(cx, |model, cx| {
+                        if model.scene.delete_selected() {
+                            model.status = "Scene node deleted".to_string();
+                        } else {
+                            model.status = "Delete failed".to_string();
+                        }
+                        cx.notify();
+                    });
+                }),
+        )
+}
+
 impl Render for EditorRoot {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let play_mode = self.model.read(cx).play_mode();
         let status = self.model.read(cx).status().to_string();
 
@@ -401,9 +575,6 @@ impl Render for EditorRoot {
                     .bottom_0()
                     .child(self.dock_area.clone()),
             )
-            .when_some(self.open_menu, |this, menu| {
-                this.child(self.render_dropdown(menu, window, cx))
-            })
     }
 }
 
@@ -529,6 +700,7 @@ impl Render for SceneOutlinePanel {
                     .children(rows.into_iter().map(|row| {
                         let model = self.model.clone();
                         let model_for_toggle = self.model.clone();
+                        let model_for_context = self.model.clone();
                         let is_selected = selected == Some(row.id);
                         let marker = if row.has_children {
                             if row.expanded { "v" } else { ">" }
@@ -536,21 +708,11 @@ impl Render for SceneOutlinePanel {
                             ""
                         };
 
-                        div()
-                            .id(("scene-row", row.id.0))
+                        ListItem::new(("scene-row", row.id.0))
                             .h(px(26.0))
                             .px_2()
                             .rounded_sm()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .cursor_pointer()
-                            .bg(if is_selected {
-                                accent_soft()
-                            } else {
-                                transparent()
-                            })
-                            .hover(|row| row.bg(rgb(0x202936)))
+                            .selected(is_selected)
                             .on_click(move |_, _, cx| {
                                 model.update(cx, |model, cx| {
                                     model.scene.select(row.id);
@@ -559,29 +721,47 @@ impl Render for SceneOutlinePanel {
                             })
                             .child(
                                 div()
-                                    .w(px(12.0 + row.depth as f32 * 14.0))
                                     .flex()
-                                    .justify_end()
-                                    .text_color(muted())
-                                    .id(("scene-toggle", row.id.0))
-                                    .child(marker)
-                                    .when(row.has_children, |toggle| {
-                                        toggle.on_click(move |_, _, cx| {
-                                            cx.stop_propagation();
-                                            model_for_toggle.update(cx, |model, cx| {
-                                                model.scene.toggle_expanded(row.id);
-                                                cx.notify();
-                                            });
-                                        })
-                                    }),
+                                    .items_center()
+                                    .gap_1()
+                                    .w_full()
+                                    .child(
+                                        div()
+                                            .w(px(12.0 + row.depth as f32 * 14.0))
+                                            .flex()
+                                            .justify_end()
+                                            .text_color(muted())
+                                            .id(("scene-toggle", row.id.0))
+                                            .child(marker)
+                                            .when(row.has_children, |toggle| {
+                                                toggle.on_click(move |_, _, cx| {
+                                                    cx.stop_propagation();
+                                                    model_for_toggle.update(cx, |model, cx| {
+                                                        model.scene.toggle_expanded(row.id);
+                                                        cx.notify();
+                                                    });
+                                                })
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_x_hidden()
+                                            .text_size(px(12.0))
+                                            .text_color(text())
+                                            .child(row.name),
+                                    ),
                             )
-                            .child(
-                                div()
-                                    .overflow_x_hidden()
-                                    .text_size(px(12.0))
-                                    .text_color(text())
-                                    .child(row.name),
-                            )
+                            .context_menu(move |menu, window, cx| {
+                                scene_context_menu(
+                                    menu,
+                                    model_for_context.clone(),
+                                    row.id,
+                                    window,
+                                    cx,
+                                )
+                            })
                     })),
             )
     }
@@ -589,6 +769,9 @@ impl Render for SceneOutlinePanel {
 
 struct InspectorPanel {
     model: Entity<EditorModel>,
+    name_input: Entity<InputState>,
+    translation_inputs: [Entity<InputState>; 3],
+    selected: Option<SceneNodeId>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -596,12 +779,87 @@ struct InspectorPanel {
 impl InspectorPanel {
     const NAME: &'static str = "crucible.inspector";
 
-    fn new(model: Entity<EditorModel>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.observe(&model, |_, _, cx| cx.notify());
-        Self {
+    fn new(model: Entity<EditorModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let translation_inputs = [
+            cx.new(|cx| InputState::new(window, cx).placeholder("X")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("Y")),
+            cx.new(|cx| InputState::new(window, cx).placeholder("Z")),
+        ];
+
+        let mut this = Self {
             model,
+            name_input,
+            translation_inputs,
+            selected: None,
             focus: cx.focus_handle(),
-            _subscriptions: vec![subscription],
+            _subscriptions: Vec::new(),
+        };
+        this.sync_inputs(window, cx);
+
+        let mut subscriptions = Vec::new();
+        subscriptions.push(cx.observe_in(&this.model, window, |this, _, window, cx| {
+            let selected = this.model.read(cx).scene.selected();
+            if this.selected != selected {
+                this.sync_inputs(window, cx);
+            }
+            cx.notify();
+        }));
+        subscriptions.push(cx.subscribe(&this.name_input, {
+            let model = this.model.clone();
+            move |_, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let name = input.read(cx).text().to_string();
+                    model.update(cx, |model, cx| {
+                        model.scene.rename_selected(name);
+                        model.status = "Inspector modified".to_string();
+                        cx.notify();
+                    });
+                }
+            }
+        }));
+
+        for (axis, input) in this.translation_inputs.iter().cloned().enumerate() {
+            subscriptions.push(cx.subscribe(&input, {
+                let model = this.model.clone();
+                move |_, input, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        update_translation_from_input(&model, &input, axis, cx);
+                    }
+                }
+            }));
+            subscriptions.push(cx.subscribe_in(&input, window, {
+                let input = input.clone();
+                move |this, _, event: &NumberInputEvent, window, cx| {
+                    if let Some(value) = step_translation_axis(&this.model, axis, event, cx) {
+                        set_input_text(&input, format_float(value), window, cx);
+                    }
+                }
+            }));
+        }
+
+        this._subscriptions = subscriptions;
+        this
+    }
+
+    fn sync_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (selected, name, translation) = {
+            let model = self.model.read(cx);
+            (
+                model.scene.selected(),
+                model.scene.selected_name().unwrap_or("").to_string(),
+                model
+                    .scene
+                    .selected_transform()
+                    .map(|transform| transform.translation)
+                    .unwrap_or_default(),
+            )
+        };
+
+        self.selected = selected;
+        set_input_text(&self.name_input, name, window, cx);
+        for (input, value) in self.translation_inputs.iter().zip(translation) {
+            set_input_text(input, format_float(value), window, cx);
         }
     }
 }
@@ -609,8 +867,9 @@ impl InspectorPanel {
 impl Render for InspectorPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.model.read(cx);
-        let name = model.scene.selected_name().unwrap_or("None").to_string();
         let selected = model.scene.selected().map(|id| id.0).unwrap_or_default();
+        let visible = model.scene.selected_visible().unwrap_or(false);
+        let model_for_visible = self.model.clone();
 
         div()
             .size_full()
@@ -624,10 +883,56 @@ impl Render for InspectorPanel {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(property_row("Name", name))
-                    .child(property_row("Node Id", selected.to_string()))
-                    .child(property_row("Transform", "0, 0, 0"))
-                    .child(property_row("Components", "Transform, Mesh"))
+                    .child(
+                        DescriptionList::vertical()
+                            .small()
+                            .columns(1)
+                            .item(
+                                "Name",
+                                Input::new(&self.name_input).small().into_any_element(),
+                                1,
+                            )
+                            .item("Node Id", selected.to_string(), 1)
+                            .item(
+                                "Translation",
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        NumberInput::new(&self.translation_inputs[0])
+                                            .small()
+                                            .appearance(true),
+                                    )
+                                    .child(
+                                        NumberInput::new(&self.translation_inputs[1])
+                                            .small()
+                                            .appearance(true),
+                                    )
+                                    .child(
+                                        NumberInput::new(&self.translation_inputs[2])
+                                            .small()
+                                            .appearance(true),
+                                    )
+                                    .into_any_element(),
+                                1,
+                            )
+                            .item(
+                                "Visible",
+                                Checkbox::new("inspector-visible")
+                                    .checked(visible)
+                                    .on_click(move |checked, _, cx| {
+                                        model_for_visible.update(cx, |model, cx| {
+                                            model.scene.set_selected_visible(*checked);
+                                            model.status = "Inspector modified".to_string();
+                                            cx.notify();
+                                        });
+                                    })
+                                    .into_any_element(),
+                                1,
+                            )
+                            .item("Components", "Transform, Mesh", 1),
+                    )
                     .child(
                         div()
                             .mt_2()
@@ -726,21 +1031,11 @@ impl Render for AssetManagerPanel {
                         let path = item.path.clone();
                         let is_selected = selected.as_ref() == Some(&item.path);
 
-                        div()
-                            .id(("asset-row", ix))
+                        ListItem::new(("asset-row", ix))
                             .h(px(26.0))
                             .px_2()
                             .rounded_sm()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .cursor_pointer()
-                            .bg(if is_selected {
-                                accent_soft()
-                            } else {
-                                transparent()
-                            })
-                            .hover(|row| row.bg(rgb(0x202936)))
+                            .selected(is_selected)
                             .on_click(move |_, _, cx| {
                                 model.update(cx, |model, cx| {
                                     model.assets.select(path.clone());
@@ -750,18 +1045,27 @@ impl Render for AssetManagerPanel {
                             })
                             .child(
                                 div()
-                                    .w(px(40.0))
-                                    .text_xs()
-                                    .text_color(accent())
-                                    .child(asset_kind_label(item.kind)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_x_hidden()
-                                    .text_size(px(12.0))
-                                    .text_color(text())
-                                    .child(item.display_path),
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .w_full()
+                                    .child(
+                                        div()
+                                            .w(px(40.0))
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(accent())
+                                            .child(asset_kind_label(item.kind)),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_x_hidden()
+                                            .text_size(px(12.0))
+                                            .text_color(text())
+                                            .child(item.display_path),
+                                    ),
                             )
                     })),
             )
@@ -1025,29 +1329,6 @@ fn section_header(label: &'static str) -> impl IntoElement {
         .child(label)
 }
 
-fn property_row(label: &'static str, value: impl Into<SharedString>) -> impl IntoElement {
-    div()
-        .min_h(px(30.0))
-        .px_2()
-        .py_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(border())
-        .bg(panel_alt())
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_2()
-        .child(div().text_xs().text_color(muted()).child(label))
-        .child(
-            div()
-                .text_size(px(12.0))
-                .text_color(text())
-                .overflow_x_hidden()
-                .child(value.into()),
-        )
-}
-
 fn asset_kind_label(kind: AssetKind) -> &'static str {
     match kind {
         AssetKind::Folder => "DIR",
@@ -1058,10 +1339,6 @@ fn asset_kind_label(kind: AssetKind) -> &'static str {
         AssetKind::Audio => "AUD",
         AssetKind::Other => "FILE",
     }
-}
-
-fn transparent() -> Rgba {
-    rgba(0x00000000)
 }
 
 fn background() -> Rgba {
@@ -1094,10 +1371,6 @@ fn muted() -> Rgba {
 
 fn accent() -> Rgba {
     rgb(0x66d9c7)
-}
-
-fn accent_soft() -> Rgba {
-    rgb(0x173c3a)
 }
 
 #[cfg(test)]
