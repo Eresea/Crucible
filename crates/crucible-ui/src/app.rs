@@ -11,9 +11,10 @@ use gpui::{
     WindowControlArea, div, prelude::FluentBuilder as _, px, rgb, rgba,
 };
 use gpui_component::{
-    ActiveTheme as _, InteractiveElementExt as _, Sizable as _,
+    ActiveTheme as _, InteractiveElementExt as _, Sizable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     description_list::DescriptionList,
+    dialog::DialogButtonProps,
     dock::{
         DockArea, DockAreaState, DockEvent, DockItem, Panel, PanelControl, PanelEvent, PanelView,
         register_panel,
@@ -22,6 +23,7 @@ use gpui_component::{
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement as _,
+    setting::{SettingField, SettingGroup, SettingItem, SettingPage, Settings},
 };
 use thiserror::Error;
 
@@ -62,10 +64,28 @@ enum MenuId {
 enum CommandId {
     SaveLayout,
     SaveScript,
+    Settings,
     RefreshAssets,
     Play,
     Pause,
     Stop,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EditorPreferences {
+    auto_save_layout: bool,
+    show_status_in_title_bar: bool,
+    show_viewport_grid: bool,
+}
+
+impl Default for EditorPreferences {
+    fn default() -> Self {
+        Self {
+            auto_save_layout: true,
+            show_status_in_title_bar: true,
+            show_viewport_grid: true,
+        }
+    }
 }
 
 pub struct EditorModel {
@@ -74,6 +94,7 @@ pub struct EditorModel {
     pub scene: SceneModel,
     pub assets: AssetIndex,
     pub script: ScriptDocument,
+    preferences: EditorPreferences,
     play_mode: bool,
     status: String,
 }
@@ -101,6 +122,7 @@ impl EditorModel {
             scene: SceneModel::default(),
             assets,
             script,
+            preferences: EditorPreferences::default(),
             play_mode: false,
             status: "Ready".to_string(),
         })
@@ -122,9 +144,14 @@ impl EditorModel {
         &self.status
     }
 
+    fn preferences(&self) -> EditorPreferences {
+        self.preferences
+    }
+
     fn execute(&mut self, command: CommandId) {
         match command {
             CommandId::SaveLayout => {}
+            CommandId::Settings => {}
             CommandId::SaveScript => match self.script.save() {
                 Ok(()) => self.status = format!("Saved {}", self.script.file_name()),
                 Err(error) => self.status = format!("Save failed: {error}"),
@@ -182,11 +209,14 @@ impl EditorRoot {
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe(&model, |_, _, cx| cx.notify()));
+        let model_for_layout = model.clone();
         subscriptions.push(cx.subscribe_in(
             &dock_area,
             window,
             move |_, dock_area, event, _, cx| {
-                if matches!(event, DockEvent::LayoutChanged) {
+                if matches!(event, DockEvent::LayoutChanged)
+                    && model_for_layout.read(cx).preferences.auto_save_layout
+                {
                     let state = dock_area.read(cx).dump(cx);
                     let _ = persist_dock_layout(&layout_path, &state);
                 }
@@ -338,6 +368,7 @@ impl EditorRoot {
 fn menu_items(menu: MenuId) -> Vec<(&'static str, Option<CommandId>)> {
     match menu {
         MenuId::File => vec![
+            ("Settings", Some(CommandId::Settings)),
             ("Save Script", Some(CommandId::SaveScript)),
             ("Save Layout", Some(CommandId::SaveLayout)),
         ],
@@ -362,6 +393,7 @@ fn run_editor_command(
     cx: &mut App,
 ) {
     match command {
+        CommandId::Settings => open_settings_dialog(model.clone(), window, cx),
         CommandId::SaveLayout => {
             let state = dock_area.read(cx).dump(cx);
             let result = persist_dock_layout(model.read(cx).layout_path(), &state);
@@ -381,6 +413,156 @@ fn run_editor_command(
         }
     }
     window.refresh();
+}
+
+fn open_settings_dialog(model: Entity<EditorModel>, window: &mut Window, cx: &mut App) {
+    window.open_dialog(cx, move |dialog, _window, cx| {
+        dialog
+            .title(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(material_icon("settings", 20.0))
+                    .child("Settings"),
+            )
+            .w(px(780.0))
+            .max_w(px(900.0))
+            .button_props(DialogButtonProps::default().cancel_text("Close"))
+            .footer(|_, cancel, window, cx| vec![cancel(window, cx)])
+            .child(settings_view(model.clone(), cx))
+    });
+}
+
+fn settings_view(model: Entity<EditorModel>, cx: &App) -> impl IntoElement {
+    let project_root = model.read(cx).project_root().display().to_string();
+    let layout_file = model.read(cx).layout_path().display().to_string();
+
+    Settings::new("crucible-settings")
+        .small()
+        .sidebar_width(px(210.0))
+        .page(
+            SettingPage::new("Editor")
+                .description("Workspace behavior and editor chrome.")
+                .resettable(false)
+                .group(
+                    SettingGroup::new()
+                        .title("Workspace")
+                        .item(
+                            SettingItem::new(
+                                "Auto-save layout",
+                                SettingField::switch(
+                                    {
+                                        let model = model.clone();
+                                        move |cx| model.read(cx).preferences().auto_save_layout
+                                    },
+                                    {
+                                        let model = model.clone();
+                                        move |value, cx| {
+                                            model.update(cx, |model, cx| {
+                                                model.preferences.auto_save_layout = value;
+                                                model.status = if value {
+                                                    "Layout auto-save enabled".to_string()
+                                                } else {
+                                                    "Layout auto-save disabled".to_string()
+                                                };
+                                                cx.notify();
+                                            });
+                                        }
+                                    },
+                                ),
+                            )
+                            .description("Persist dock changes as you rearrange panels."),
+                        )
+                        .item(
+                            SettingItem::new(
+                                "Show title status",
+                                SettingField::switch(
+                                    {
+                                        let model = model.clone();
+                                        move |cx| {
+                                            model.read(cx).preferences().show_status_in_title_bar
+                                        }
+                                    },
+                                    {
+                                        let model = model.clone();
+                                        move |value, cx| {
+                                            model.update(cx, |model, cx| {
+                                                model.preferences.show_status_in_title_bar = value;
+                                                cx.notify();
+                                            });
+                                        }
+                                    },
+                                ),
+                            )
+                            .description(
+                                "Display the current editor status in the integrated title bar.",
+                            ),
+                        )
+                        .item(
+                            SettingItem::new(
+                                "Viewport grid",
+                                SettingField::switch(
+                                    {
+                                        let model = model.clone();
+                                        move |cx| model.read(cx).preferences().show_viewport_grid
+                                    },
+                                    {
+                                        let model = model.clone();
+                                        move |value, cx| {
+                                            model.update(cx, |model, cx| {
+                                                model.preferences.show_viewport_grid = value;
+                                                cx.notify();
+                                            });
+                                        }
+                                    },
+                                ),
+                            )
+                            .description(
+                                "Show the editor grid overlay in the viewport placeholder.",
+                            ),
+                        ),
+                ),
+        )
+        .page(
+            SettingPage::new("Project")
+                .description("Current project paths.")
+                .resettable(false)
+                .group(
+                    SettingGroup::new()
+                        .title("Paths")
+                        .item(read_only_setting("Project root", project_root))
+                        .item(read_only_setting("Layout file", layout_file)),
+                ),
+        )
+        .page(
+            SettingPage::new("Rendering")
+                .description("Renderer defaults for the editor shell.")
+                .resettable(false)
+                .group(
+                    SettingGroup::new()
+                        .title("Runtime")
+                        .item(read_only_setting("GPU backend", "wgpu".to_string()))
+                        .item(read_only_setting(
+                            "Present mode preference",
+                            "Immediate, Mailbox, Fifo".to_string(),
+                        )),
+                ),
+        )
+}
+
+fn read_only_setting(title: &'static str, value: String) -> SettingItem {
+    SettingItem::new(
+        title,
+        SettingField::<SharedString>::render(move |_, _, _| {
+            div()
+                .max_w(px(380.0))
+                .overflow_x_hidden()
+                .text_sm()
+                .text_color(muted())
+                .child(value.clone())
+        }),
+    )
 }
 
 fn set_input_text(
@@ -615,8 +797,16 @@ fn scene_context_menu(
 
 impl Render for EditorRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_mode = self.model.read(cx).play_mode();
-        let status = self.model.read(cx).status().to_string();
+        let (play_mode, status) = {
+            let model = self.model.read(cx);
+            let preferences = model.preferences();
+            let status = if preferences.show_status_in_title_bar {
+                model.status().to_string()
+            } else {
+                String::new()
+            };
+            (model.play_mode(), status)
+        };
 
         div()
             .flex()
@@ -658,36 +848,40 @@ impl ViewportPanel {
 
 impl Render for ViewportPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_mode = self.model.read(cx).play_mode();
+        let model = self.model.read(cx);
+        let play_mode = model.play_mode();
+        let show_grid = model.preferences().show_viewport_grid;
         let grid = rgba(0x25303d80);
         div()
             .relative()
             .size_full()
             .overflow_hidden()
             .bg(rgb(0x090c10))
-            .child(
-                div()
-                    .absolute()
-                    .size_full()
-                    .children((1..18).map(move |ix| {
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(px(ix as f32 * 48.0))
-                            .w(px(1.0))
-                            .bg(grid)
-                    }))
-                    .children((1..12).map(move |ix| {
-                        div()
-                            .absolute()
-                            .left_0()
-                            .right_0()
-                            .top(px(ix as f32 * 48.0))
-                            .h(px(1.0))
-                            .bg(grid)
-                    })),
-            )
+            .when(show_grid, |viewport| {
+                viewport.child(
+                    div()
+                        .absolute()
+                        .size_full()
+                        .children((1..18).map(move |ix| {
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(px(ix as f32 * 48.0))
+                                .w(px(1.0))
+                                .bg(grid)
+                        }))
+                        .children((1..12).map(move |ix| {
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top(px(ix as f32 * 48.0))
+                                .h(px(1.0))
+                                .bg(grid)
+                        })),
+                )
+            })
             .child(
                 div()
                     .absolute()
@@ -761,12 +955,6 @@ impl Render for SceneOutlinePanel {
                         let model_for_toggle = self.model.clone();
                         let model_for_context = self.model.clone();
                         let is_selected = selected == Some(row.id);
-                        let marker = if row.has_children {
-                            if row.expanded { "v" } else { ">" }
-                        } else {
-                            ""
-                        };
-
                         ListItem::new(("scene-row", row.id.0))
                             .h(px(26.0))
                             .px_2()
@@ -791,7 +979,19 @@ impl Render for SceneOutlinePanel {
                                             .justify_end()
                                             .text_color(muted())
                                             .id(("scene-toggle", row.id.0))
-                                            .child(marker)
+                                            .child(if row.has_children {
+                                                material_icon(
+                                                    if row.expanded {
+                                                        "expand_more"
+                                                    } else {
+                                                        "chevron_right"
+                                                    },
+                                                    16.0,
+                                                )
+                                                .into_any_element()
+                                            } else {
+                                                div().size(px(16.0)).into_any_element()
+                                            })
                                             .when(row.has_children, |toggle| {
                                                 toggle.on_click(move |_, _, cx| {
                                                     cx.stop_propagation();
