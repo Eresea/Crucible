@@ -1,22 +1,75 @@
 (
-    left_width: 280.0,
-    right_width: 300.0,
-    bottom_height: 230.0,
-    left_tabs: [
-        SceneOutline,
-    ],
-    center_tabs: [
-        Viewport,
-    ],
-    right_tabs: [
-        Inspector,
-    ],
-    bottom_tabs: [
-        AssetManager,
-        ScriptEditor,
-    ],
-    active_left: 0,
-    active_center: 0,
-    active_right: 0,
-    active_bottom: 0,
+    version: Some(2),
+    center: (
+        panel_name: "TabPanel",
+        children: [
+            (
+                panel_name: "crucible.viewport",
+                children: [],
+                info: panel(()),
+            ),
+        ],
+        info: tabs(
+            active_index: 0,
+        ),
+    ),
+    left_dock: Some((
+        panel: (
+            panel_name: "TabPanel",
+            children: [
+                (
+                    panel_name: "crucible.scene-outline",
+                    children: [],
+                    info: panel(()),
+                ),
+            ],
+            info: tabs(
+                active_index: 0,
+            ),
+        ),
+        placement: left,
+        size: (260.0),
+        open: true,
+    )),
+    right_dock: Some((
+        panel: (
+            panel_name: "TabPanel",
+            children: [
+                (
+                    panel_name: "crucible.inspector",
+                    children: [],
+                    info: panel(()),
+                ),
+            ],
+            info: tabs(
+                active_index: 0,
+            ),
+        ),
+        placement: right,
+        size: (300.0),
+        open: true,
+    )),
+    bottom_dock: Some((
+        panel: (
+            panel_name: "TabPanel",
+            children: [
+                (
+                    panel_name: "crucible.asset-manager",
+                    children: [],
+                    info: panel(()),
+                ),
+                (
+                    panel_name: "crucible.script-editor",
+                    children: [],
+                    info: panel(()),
+                ),
+            ],
+            info: tabs(
+                active_index: 0,
+            ),
+        ),
+        placement: bottom,
+        size: (260.0),
+        open: true,
+    )),
 )
